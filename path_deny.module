@@ -1,0 +1,124 @@
+<?php
+/**
+ * @file
+ * This module exists solely to let us deny access to a specific path based
+ * on a user's role. Think of this as a quick-and-dirty access control module.
+ *
+ * Original code based on:
+ * http://stackoverflow.com/questions/7711555/drupal-7-restrict-access-by-path
+ *
+ * Nov 30, 2013: Kendall Anderson
+ */
+
+define('PATH_DENY_VAR_CONFIG', 'path_deny_config');
+
+/**
+ * Implements hook_init().
+ */
+function path_deny_init() {
+  if (!$restrictions = path_deny_get_restrictions()) {
+    // No restrictions are in place.
+    return;
+  }
+
+  path_deny_apply_restrictions($restrictions);
+}
+
+/**
+ * Implements hook_menu().
+ */
+function path_deny_menu() {
+  $items = array();
+  $items['admin/config/people/path-deny'] = array(
+    'title' => "Path Deny settings",
+    'description' => "Configure paths that are denied if the user doesn't have one of the required roles.",
+    'type' => MENU_NORMAL_ITEM,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('path_deny_settings'),
+    'access arguments' => array('administer site configuration'),
+  );
+  return $items;
+}
+
+/**
+ * Prepare the module settings form.
+ */
+function path_deny_settings() {
+  $form = array();
+
+  $form[PATH_DENY_VAR_CONFIG] = array(
+    '#title' => "Paths which require specific roles",
+    '#type' => 'textarea',
+    '#default_value' => variable_get(PATH_DENY_VAR_CONFIG, ''),
+    '#description' => "Each line should be a path followed by role name(s) required to access it, all comma-delimited. One path per line.<br><br>e.g.,<br>admin/dashboard,administrator,editor<br>admin/structure/taxonomy/topics,administrator,blogger,editor<br>admin/structure/taxonomy/titles,editor<br><br>If a user has *any* of the listed roles, they'll be allowed to access the path (assuming other module/permission restrictions don't apply).",
+  );
+
+  return system_settings_form($form);
+}
+
+/**
+ * Get the current path restrictions and return the configuration.
+ *
+ * @return assoc array with
+ *   key => string path to match
+ *   value => array of role names that allow access to this path
+ */
+function path_deny_get_restrictions() {
+  $restrictions = variable_get(PATH_DENY_VAR_CONFIG, '');
+  if ($restrictions == '') {
+    return FALSE;
+  }
+
+  $lines = explode("\n", $restrictions);
+  if (count($lines) < 1) {
+    return FALSE;
+  }
+
+  $paths = array();
+  foreach ($lines as $line) {
+    if (trim($line) == '') {
+      continue;
+    }
+    elseif (substr($line, 0, 1) == ';') {
+      // This line is a comment, so ignore it.
+      continue;
+    }
+
+    $items = explode(',', $line);
+    $path = array_shift($items);
+
+    $paths[$path] = $items;
+  }
+
+  return $paths;
+}
+
+/**
+ * Apply the given path access restrictions.
+ */
+function path_deny_apply_restrictions($restrictions) {
+  global $user;
+
+  $had_match = FALSE;
+  $is_valid  = FALSE;
+
+  foreach ($restrictions as $path => $roles) {
+    // See if the current path matches any of the patterns provided.
+    if (drupal_match_path($_GET['q'], $path)) {
+      $had_match = TRUE;
+
+      // It matches, check the current user has any of the required roles.
+      foreach ($roles as $role) {
+        if (in_array($role, $user->roles)) {
+          $is_valid = TRUE;
+          break;
+        }
+      }
+    }
+  }
+
+  if ($had_match && !$is_valid) {
+    drupal_access_denied();
+    exit;
+  }
+}
